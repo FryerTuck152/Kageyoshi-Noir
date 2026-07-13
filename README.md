@@ -1,4 +1,5 @@
 <img width="1308" height="736" alt="kuchiki byakuya" src="https://github.com/user-attachments/assets/0e949dfd-54b5-4d48-8f97-db90cafbf297" />
+
 **Kageyoshi-Noir**
 
 A universal roblox script mostly vibe-coded. Offers are welcomed.
@@ -10,7 +11,7 @@ Script has both universal features and targeted at specific games. Script was te
 **Launching**
 
 ```lua
-
+loadstring(game:HttpGet("https://raw.githubusercontent.com/FryerTuck152/Kageyoshi-Noir/refs/heads/main/Release.lua"))()
 ```
 
 **Functionality**
@@ -26,6 +27,7 @@ Script has many universal and targeted features:
 - SlapBattles helper
 - Infinity Yield integration
 - Simple Spy intergration
+
 And many others.
 
 **Compability**
