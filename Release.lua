@@ -1,8 +1,3 @@
---===========================================================================
---  NEON PINK MENU  ::  Release (skeleton + all functions from beta3.lua + scroll fix)
---===========================================================================
-
---== PROTECTED BACKEND =======================================================
 local function getService(name)
 	local ok, svc = pcall(function()
 		if cloneref then return cloneref(game:GetService(name)) end
@@ -20,9 +15,8 @@ local UserInputService = getService("UserInputService")
 local TweenService     = getService("TweenService")
 local CoreGui          = (gethui and gethui()) or getService("CoreGui")
 local Camera           = workspace.CurrentCamera
-local LocalPlayer      = Players.LocalPlayer   -- DO NOT clone (crashes require)
+local LocalPlayer      = Players.LocalPlayer   -- don't clone — crashes require
 
--- Random name for GUI (avoid leaking a fixed name)
 local function rnd(len)
 	local c = "abcdefghijklmnopqrstuvwxyz0123456789"
 	local t = {}
@@ -32,15 +26,14 @@ local function rnd(len)
 	return table.concat(t)
 end
 
--- Per-run randomized identifiers for runtime instances (movers / gyros /
--- attachments / plate / overlay-GUI). Fresh each launch.
+-- randomized inst names per launch, so they can't be sniffed by fixed names
 local RN = {
 	FlyMover  = rnd(), FlyAtt = rnd(), FlyGyro = rnd(),
 	GoldMover = rnd(), GoldAtt = rnd(), GoldGyro = rnd(),
 	Gui = rnd(), CursorGui = rnd(), StatsGui = rnd(), Plate = rnd(),
 }
 
--- Single store for cleaning up the previous run
+-- one key for everything — to clean up the previous run
 local KEY = "\0__np_" .. tostring(game.PlaceId % 997)
 getgenv()[KEY] = getgenv()[KEY] or {}
 local G = getgenv()[KEY]
@@ -50,13 +43,12 @@ for k, v in pairs(G) do
 end
 G.shutdown = false
 
--- Protected parent
 local function hiddenParent(obj)
 	pcall(function() if syn and syn.protect_gui then syn.protect_gui(obj) end end)
 	obj.Parent = CoreGui
 end
 
--- Cleanup stale ESP cache from previous runs
+-- residue cleanup from the previous ESP
 if G.espCache then
 	for _, playerCache in pairs(G.espCache) do
 		for k, obj in pairs(playerCache) do
@@ -72,23 +64,21 @@ G.espCache = {}
 local espCache = G.espCache
 local _SIZE_OFFSET = Vector3.new(0.05, 0.05, 0.05)
 
--- Reset state flags
 G.gold = false; G.goldClaim = false; G.autoFort = false
 G.slapple = false; G.spoofMask = false; G.antirag = false
 
--- State tables
-local ESP = { Enabled = false, ShowTeam = true, Mode = "Cubes", ChamsTransparency = 0.5, Hue = 0.5, Shade = 0.5, Color = Color3.fromRGB(95, 205, 228), Radius = 10000 }
+local ESP = { Enabled = false, ShowTeam = true, Mode = "Cubes", ChamsTransparency = 0.5, Hue = 0.5, Shade = 0.5, Color = Color3.fromRGB(95, 205, 228), Radius = 10000, PFMode = false }
 local PlayerMods = { SpeedEnabled = false, SpeedValue = 16, JumpEnabled = false, JumpValue = 50, FlyEnabled = false, FlySpeed = 50, NoclipEnabled = false, WallWalkEnabled = false, InfJumpEnabled = false, AntiKnockback = false }
 
 local Aim = {
 	Enabled = false,
-	ActivationKey = Enum.KeyCode.E,     -- можно сменить на менее конфликтную клавишу
-	ActivationInput = nil,              -- если задан UserInputType (напр. ПКМ) — используется он
+	ActivationKey = Enum.KeyCode.E,
+	ActivationInput = nil,  -- UserInputType (e.g. RMB) takes precedence if set
 	TeamCheck = false,
 	FOV_Radius = 250,
 	ShowFOV = true,
-	AimPart = "Head",                 -- Head / HumanoidRootPart / UpperTorso
-	Smoothing = 5,                    -- 1 = мгновенно, больше = плавнее
+	AimPart = "Head",
+	Smoothing = 5,  -- 1 = snap, higher = smoother
 	MaxDistance = 500,
 	WallCheck = true,
 	PredictionEnabled = false,
@@ -97,14 +87,13 @@ local Aim = {
 
 local Crosshair = {
 	Enabled = false,
-	Left = true, Right = true, Top = true, Bottom = true,  -- по дефолту все палочки вкл
+	Left = true, Right = true, Top = true, Bottom = true,
 	Length = 10, Width = 2, Gap = 4,
-	DotEnabled = false,               -- точка по дефолту ВЫКЛ
+	DotEnabled = false,
 	DotThickness = 2,
-	Color = Color3.fromRGB(255, 75, 150),  -- THEME.NEON
+	Color = Color3.fromRGB(255, 75, 150),
 }
 
--- Cached character parts for noclip loop
 local _charParts = {}
 local _charPartsFor = nil
 local function _rebuildParts()
@@ -158,9 +147,9 @@ local function clearESP(player)
 	end
 end
 
------------------------------------
--- THEME
------------------------------------
+-- forward declaration; реализация ниже, рядом с resolveCharacter
+local _pfEspClear, _pfMyTeamCached, _pfAnalyzeTeams
+
 local THEME = {
 	BG_MAIN   = Color3.fromRGB(12, 12, 14),
 	BG_SIDE   = Color3.fromRGB(18, 18, 22),
@@ -183,9 +172,7 @@ local function glowStroke(obj, thickness, transparency)
 	return s
 end
 
------------------------------------
--- MOUSE FIX (адаптивный, отдаёт управление игре при закрытии)
------------------------------------
+-- adaptive mouse fix — gives control back to the game when menu is closed
 local menuIsOpen = true
 local menuToken = 0
 local rmbHeld = false
@@ -198,12 +185,11 @@ local function isShiftLockOptionEnabled()
 	return ok and res or false
 end
 
--- Определить, находится ли игрок сейчас в режиме, где камера хочет залочить курсор
--- (first person или включён shift lock). Используется, чтобы НЕ мешать игре при закрытом меню.
+-- is the player in a mode where the camera wants to lock the cursor?
+-- (first person or shift lock on). used to not interfere while menu is closed.
 local function gameWantsLock()
-	-- shift lock включён в настройках
 	if isShiftLockOptionEnabled() then return true end
-	-- first person: расстояние от камеры до точки фокуса очень мало
+	-- first person: camera-to-focus distance is tiny
 	local ok, dist = pcall(function()
 		return (Camera.CFrame.Position - Camera.Focus.Position).Magnitude
 	end)
@@ -218,11 +204,11 @@ G.rmbEnded = UserInputService.InputEnded:Connect(function(i)
 	if i.UserInputType == Enum.UserInputType.MouseButton2 then rmbHeld = false end
 end)
 
--- Пока меню открыто: держим курсор свободным. Работает даже в "залипающих" играх (TC2),
--- т.к. каждый кадр возвращаем Default, если игра снова залочила (но не мешаем ПКМ-повороту камеры).
+-- while menu open: keep the cursor free. works even on "sticky" games (TC2),
+-- since each frame we revert to Default if the game re-locked (but don't break RMB camera turn).
 G.openCursorLoop = RunService.RenderStepped:Connect(function()
 	if G.shutdown or not menuIsOpen then return end
-	if rmbHeld then return end   -- пока крутят камеру ПКМ — не вмешиваемся
+	if rmbHeld then return end  -- turning camera with RMB — don't interfere
 	if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	end
@@ -231,22 +217,19 @@ G.openCursorLoop = RunService.RenderStepped:Connect(function()
 	end
 end)
 
--- Когда меню ЗАКРЫТО: НЕ навязываем режим. Отдаём управление игре.
--- Единственное вмешательство — аварийное: курсор завис в LockCenter, но игра его НЕ хочет
--- (не first-person, не shift-lock, не зажата ПКМ) → отпускаем.
+-- while menu CLOSED: don't force a mode. hand control to the game.
+-- only emergency: cursor stuck in LockCenter but the game doesn't want it
+-- (not first-person, not shift-lock, RMB not held) -> release.
 G.closedCursorLoop = RunService.RenderStepped:Connect(function()
 	if G.shutdown or menuIsOpen then return end
 	if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then return end
 	if rmbHeld or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then return end
-	if gameWantsLock() then return end   -- игра легитимно хочет lock — не трогаем
+	if gameWantsLock() then return end  -- game legitimately wants lock — leave it
 	pcall(function()
 		UserInputService.MouseBehavior = Enum.MouseBehavior.Default
 	end)
 end)
 
------------------------------------
--- SCREEN GUI
------------------------------------
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = RN.Gui
 ScreenGui.ResetOnSpawn = false
@@ -1032,11 +1015,22 @@ do
 
 	createCheckbox("Show teammates", true, "Show teammates", espRow, function(on)
 		ESP.ShowTeam = on
+		_pfMyTeamCached = nil  -- пересчёт команды нужен сразу
+		-- переанализ команд PF при любом переключении
+		if ESP.PFMode and _pfAnalyzeTeams then _pfAnalyzeTeams() end
 		if not on then
 			for _, p in pairs(Players:GetPlayers()) do
 				if p.Team == LocalPlayer.Team then clearESP(p) end
 			end
 		end
+	end)
+
+	createCheckbox("Phantom Forces Mode", false, "Phantom Forces Mode ESP", espRow, function(on)
+		ESP.PFMode = on
+		-- смена провайдера: чистим оба кэша
+		for _, p in pairs(Players:GetPlayers()) do clearESP(p) end
+		_pfEspClear()
+		if _pfAnalyzeTeams then _pfAnalyzeTeams() end
 	end)
 
 	local chamsSliderRow
@@ -1758,11 +1752,14 @@ do
 	local _statsGui = nil
 	local _statsConn = nil
 	local _statsBtnFpsPing, _statsBtnFps, _statsBtnPing
+	local _updateStatsBtns  -- forward declaration; реализация ниже
 
 	local function _setStatsMode(mode)
-		if _statsConn then _statsConn:Disconnect(); _statsConn = nil end
-		if _statsGui then _statsGui:Destroy(); _statsGui = nil; G.statsGui = nil end
+		if _statsConn then pcall(function() _statsConn:Disconnect() end); _statsConn = nil end
+		if G.statsConn then pcall(function() G.statsConn:Disconnect() end); G.statsConn = nil end
+		if _statsGui then pcall(function() _statsGui:Destroy() end); _statsGui = nil; G.statsGui = nil end
 		_statsMode = mode
+		if _updateStatsBtns then _updateStatsBtns() end  -- сразу обновить подсветку кнопок (в т.ч. при выключении)
 		if not mode then return end
 
 		_statsGui = Instance.new("ScreenGui")
@@ -1809,7 +1806,7 @@ do
 		G.statsConn = _statsConn
 	end
 
-	local function _updateStatsBtns()
+	_updateStatsBtns = function()
 		local on = Color3.fromRGB(200, 50, 50)
 		local off = THEME.NEON
 		if _statsBtnFpsPing then _statsBtnFpsPing.BackgroundColor3 = (_statsMode == "both") and on or off end
@@ -2427,6 +2424,430 @@ do
 end
 
 --===========================================================================
+-- УНИВЕРСАЛЬНЫЙ РЕЗОЛВЕР ПЕРСОНАЖА (ESP + Aim, любая игра)
+-- Кэшируется, чтобы не делать тяжёлый поиск каждый кадр (защита от фризов).
+--===========================================================================
+local ROOT_NAMES = { "HumanoidRootPart", "Torso", "UpperTorso", "Root", "LowerTorso", "Head" }
+local AIM_PART_FALLBACKS = { "Head", "HumanoidRootPart", "Torso", "UpperTorso", "Root" }
+
+-- корневая часть без опоры на Humanoid
+local function resolveRoot(model)
+	if not model then return nil end
+	for _, name in ipairs(ROOT_NAMES) do
+		local p = model:FindFirstChild(name)
+		if p and p:IsA("BasePart") then return p end
+	end
+	for _, d in ipairs(model:GetChildren()) do
+		if d:IsA("BasePart") then return d end
+	end
+	return nil
+end
+
+-- прицельная часть с фолбэком (для Aim и Boxes)
+local function resolveAimPart(model, preferred)
+	if not model then return nil end
+	if preferred then
+		local p = model:FindFirstChild(preferred)
+		if p and p:IsA("BasePart") then return p end
+	end
+	for _, name in ipairs(AIM_PART_FALLBACKS) do
+		local p = model:FindFirstChild(name)
+		if p and p:IsA("BasePart") then return p end
+	end
+	return resolveRoot(model)
+end
+
+-- жив ли (без жёсткой опоры на Humanoid.Health)
+local function resolveAlive(model)
+	if not model or not model.Parent then return false end
+	local hum = model:FindFirstChildOfClass("Humanoid")
+	if hum then return hum.Health > 0 end
+	return resolveRoot(model) ~= nil
+end
+
+-- КЭШ модели персонажа на игрока (обновляется по таймеру, а не каждый кадр)
+local _charResolveCache = {}   -- [player] = { model = Model, t = tick() }
+local _CHAR_RESOLVE_TTL = 1.0  -- секунда; тела не пересоздаются каждый кадр
+
+local function _deepFindPlayerModel(player)
+	-- 1) стандартный путь
+	local c = player.Character
+	if c and resolveRoot(c) then return c end
+	-- 2) кастомные контейнеры (динамически — тела пересоздаются на респавне)
+	local containers = {
+		workspace:FindFirstChild("Players"),
+		workspace:FindFirstChild("Characters"),
+		workspace:FindFirstChild("Ignore"),
+		workspace:FindFirstChild("Living"),
+		workspace:FindFirstChild("Alive"),
+	}
+	for _, cont in ipairs(containers) do
+		if cont then
+			local m = cont:FindFirstChild(player.Name)
+			if m and m:IsA("Model") and resolveRoot(m) then return m end
+		end
+	end
+	-- 3) прямой ребёнок workspace с именем игрока
+	local direct = workspace:FindFirstChild(player.Name)
+	if direct and direct:IsA("Model") and resolveRoot(direct) then return direct end
+	return nil
+end
+
+local function resolveCharacter(player)
+	local entry = _charResolveCache[player]
+	local now = tick()
+	if entry and entry.model and entry.model.Parent and (now - entry.t) < _CHAR_RESOLVE_TTL then
+		-- быстрый путь: проверяем только валидность кэша
+		if resolveRoot(entry.model) then return entry.model end
+	end
+	local model = _deepFindPlayerModel(player)
+	_charResolveCache[player] = { model = model, t = now }
+	return model
+end
+
+--===========================================================================
+-- PHANTOM FORCES ESP PROVIDER (PlaceId 292439477)
+-- В PF у игроков player.Character = nil: тела лежат в workspace.Players/<teamFolder>/<model>.
+-- Имена моделей зашифрованы и меняются; PrimaryPart = nil; Humanoid отсутствует.
+-- Ник игрока лежит в model.NameTagGui.PlayerTag (TextLabel); ХП — в model.NameTagGui.Health (Frame).
+--===========================================================================
+local _pfCache = {}  -- [Model] = { Highlight=..., Box=..., lastMode=... }
+
+_pfEspClear = function(model)
+	if model then
+		local c = _pfCache[model]
+		if c then
+			if c._cubes then
+				for _, obj in pairs(c._cubes) do
+					if typeof(obj) == "Instance" then pcall(function() obj:Destroy() end) end
+				end
+			end
+			for k, obj in pairs(c) do
+				if k ~= "_cubes" then
+					if typeof(obj) == "Instance" then pcall(function() obj:Destroy() end)
+					elseif type(obj) ~= "string" then pcall(function() obj:Remove() end) end
+				end
+			end
+			_pfCache[model] = nil
+		end
+	else
+		for m in pairs(_pfCache) do _pfEspClear(m) end
+		_pfCache = {}
+	end
+end
+
+-- крупная часть тела для бокса/дистанции (не оружие);
+-- части вложены в подпапки модели → обходим через GetDescendants
+local function _pfBodyRoot(model)
+	local best, bestVol = nil, 0
+	for _, d in ipairs(model:GetDescendants()) do
+		if d:IsA("BasePart") then
+			local s = d.Size
+			-- крупные части тела (>0.4 по всем осям); мелочь/детали оружия пропускаем
+			if s.X > 0.4 and s.Y > 0.4 and s.Z > 0.4 then
+				local vol = s.X * s.Y * s.Z
+				if vol > bestVol then bestVol = vol; best = d end
+			end
+		end
+	end
+	return best
+end
+
+-- ник игрока из NameTagGui (рекурсивно, т.к. может быть вложен глубже модели)
+local function _pfName(model)
+	local gui = model:FindFirstChild("NameTagGui", true)
+	if gui then
+		local tag = gui:FindFirstChild("PlayerTag", true)
+		if tag and tag:IsA("TextLabel") then return tag.Text end
+	end
+	return nil
+end
+
+-- Кэш анализа команд PF: [Model] = "ally"/"enemy"/nil
+local _pfTeamMap = {}
+local _pfAllyColor = nil   -- Color3 союзной команды (определяется анализом)
+local _pfEnemyColor = nil
+
+-- цвет ника модели (маркер команды в PF)
+local function _pfTagColor(model)
+	local gui = model:FindFirstChild("NameTagGui", true)
+	if not gui then return nil end
+	local tag = gui:FindFirstChild("PlayerTag", true)
+	if not (tag and tag:IsA("TextLabel")) then return nil end
+	return tag.TextColor3
+end
+
+-- сравнение цветов с допуском
+local function _pfColorEq(a, b)
+	if not a or not b then return false end
+	return math.abs(a.R-b.R) < 0.15 and math.abs(a.G-b.G) < 0.15 and math.abs(a.B-b.B) < 0.15
+end
+
+-- классификация одного цвета: циан/зелёный = ally, красный = enemy
+local function _pfClassifyColor(c)
+	if not c then return nil end
+	if c.G > 0.5 and c.R < 0.5 then return "ally"
+	elseif c.R > 0.5 and c.G < 0.5 then return "enemy" end
+	return nil
+end
+
+-- Полный анализ структуры: собирает цвета, группирует, логирует.
+-- Вызывается при переключении Show teammates и включении PF Mode.
+_pfAnalyzeTeams = function()
+	local pf = workspace:FindFirstChild("Players")
+	_pfTeamMap = {}
+	_pfAllyColor, _pfEnemyColor = nil, nil
+	if not pf then
+		warn("[ESP PF] workspace.Players не найден — анализ невозможен")
+		return
+	end
+	-- собрать уникальные цвета и посчитать модели
+	local groups = {}  -- { {color=Color3, count=n, folder=name} , ... }
+	local total = 0
+	for _, folder in ipairs(pf:GetChildren()) do
+		for _, m in ipairs(folder:GetChildren()) do
+			if m:IsA("Model") then
+				total = total + 1
+				local col = _pfTagColor(m)
+				if col then
+					local matched
+					for _, g in ipairs(groups) do
+						if _pfColorEq(g.color, col) then matched = g; break end
+					end
+					if matched then
+						matched.count = matched.count + 1
+					else
+						groups[#groups+1] = { color = col, count = 1, folder = folder.Name }
+					end
+					local cls = _pfClassifyColor(col)
+					_pfTeamMap[m] = cls
+					if cls == "ally" and not _pfAllyColor then _pfAllyColor = col end
+					if cls == "enemy" and not _pfEnemyColor then _pfEnemyColor = col end
+				else
+					_pfTeamMap[m] = nil  -- цвет не прочитан → показываем
+				end
+			end
+		end
+	end
+	-- лог
+	print("=== [ESP PF] Team analysis ===")
+	print("  Всего моделей:", total, "| цветовых групп:", #groups)
+	for i, g in ipairs(groups) do
+		print(string.format("  Группа %d: color=(%.2f,%.2f,%.2f) count=%d class=%s folder=%s",
+			i, g.color.R, g.color.G, g.color.B, g.count,
+			tostring(_pfClassifyColor(g.color)), tostring(g.folder)))
+	end
+	if #groups > 2 then
+		warn("[ESP PF] Обнаружено >2 цветовых групп — фильтр может работать неточно")
+	elseif #groups < 2 then
+		warn("[ESP PF] <2 групп — все игроки одного цвета? Фильтр покажет всех")
+	end
+	print("  Ally color:", tostring(_pfAllyColor), "| Enemy color:", tostring(_pfEnemyColor))
+	print("==============================")
+end
+
+-- определить свою команду: папка, в которой лежит собственная модель LocalPlayer.
+-- Сначала через resolveCharacter (надёжно: работает и в PF), затем fallback по нику
+-- из NameTagGui (с нормализацией: trim + strip rich-text-обёрток).
+local function _pfNormalizeName(s)
+	if not s then return nil end
+	s = s:gsub("%s+", " "):match("^%s*(.-)%s*$")  -- trim
+	return s
+end
+
+local function _pfMyTeamFolder(pf)
+	-- 1) через resolveCharacter — находит модель LocalPlayer любыми способами
+	local myModel = resolveCharacter(LocalPlayer)
+	if myModel then
+		local parent = myModel.Parent
+		if parent and parent:IsA("Folder") and parent.Parent == pf then
+			return parent
+		end
+	end
+	-- 2) fallback: сравнение нормализованного ника из NameTagGui
+	local myDisplay = _pfNormalizeName(LocalPlayer.DisplayName)
+	local myName = _pfNormalizeName(LocalPlayer.Name)
+	for _, team in ipairs(pf:GetChildren()) do
+		for _, m in ipairs(team:GetChildren()) do
+			if m:IsA("Model") then
+				local nm = _pfNormalizeName(_pfName(m))
+				if nm and (nm == myDisplay or nm == myName) then
+					return team
+				end
+			end
+		end
+	end
+	return nil
+end
+
+-- _pfMyTeamCached — forward-объявленная (сбрасывается из колбэка Show teammates); оставлена для совместимости
+_pfMyTeamCached = nil
+
+-- собрать все тела: при hideTeam прячем только уверенно определённых союзников
+local function _pfGetBodies()
+	local list = {}
+	local pf = workspace:FindFirstChild("Players")
+	if not pf then return list end
+	local hideTeam = (not ESP.ShowTeam)
+	for _, folder in ipairs(pf:GetChildren()) do
+		for _, m in ipairs(folder:GetChildren()) do
+			if m:IsA("Model") then
+				if hideTeam then
+					-- прячем только уверенно определённых союзников; остальных показываем
+					local cls = _pfTeamMap[m]
+					if cls == nil then
+						-- модель появилась после анализа — классифицируем на лету
+						cls = _pfClassifyColor(_pfTagColor(m))
+						_pfTeamMap[m] = cls
+					end
+					if cls ~= "ally" then
+						list[#list+1] = m
+					end
+				else
+					list[#list+1] = m
+				end
+			end
+		end
+	end
+	return list
+end
+
+local function _pfRunEsp()
+	-- убрать кэш для исчезнувших моделей
+	for model in pairs(_pfCache) do
+		if not model.Parent then _pfEspClear(model) end
+	end
+
+	local bodies = _pfGetBodies()
+	local seen = {}
+	local camPos = Camera.CFrame.Position
+
+	for _, model in ipairs(bodies) do
+		seen[model] = true
+		local root = _pfBodyRoot(model)
+		if root then
+			-- дистанция
+			local inRange = true
+			if ESP.Radius < 10000 then
+				local d = root.Position - camPos
+				inRange = (d:Dot(d) <= ESP.Radius * ESP.Radius)
+			end
+
+			local cache = _pfCache[model]
+			if not cache or cache.lastMode ~= ESP.Mode then
+				_pfEspClear(model)
+				_pfCache[model] = { lastMode = ESP.Mode }
+				cache = _pfCache[model]
+			end
+
+			if not inRange then
+				if cache.Highlight then cache.Highlight.Enabled = false end
+				if cache.Box then cache.Box.Visible = false end
+				if cache._cubes then
+					for _, v in pairs(cache._cubes) do v.Visible = false end
+				end
+			elseif ESP.Mode == "Cubes" then
+				-- PF: кубик по каждой крупной части тела (части вложены в подпапки → GetDescendants)
+				if cache.Highlight then cache.Highlight.Enabled = false end
+				if not cache._cubes then cache._cubes = {} end
+				local cubes = cache._cubes
+				local active = {}
+				for _, part in ipairs(model:GetDescendants()) do
+					if part:IsA("BasePart") and part.Transparency < 1 then
+						local s = part.Size
+						-- крупные части тела (>0.4 по всем осям), мелочь/оружие пропускаем
+						if s.X > 0.4 and s.Y > 0.4 and s.Z > 0.4 then
+							active[part] = true
+							if not cubes[part] then
+								local box = Instance.new("BoxHandleAdornment")
+								box.Name = rnd()
+								box.Size = s + _SIZE_OFFSET
+								box.AlwaysOnTop = true
+								box.ZIndex = 5
+								box.Transparency = 0.6
+								hiddenParent(box)
+								box.Adornee = part
+								cubes[part] = box
+							end
+							cubes[part].Visible = true
+							if cubes[part].Color3 ~= ESP.Color then
+								cubes[part].Color3 = ESP.Color
+							end
+							local newSize = s + _SIZE_OFFSET
+							if cubes[part].Size ~= newSize then
+								cubes[part].Size = newSize
+							end
+						end
+					end
+				end
+				for p, obj in pairs(cubes) do
+					if not active[p] then
+						if typeof(obj) == "Instance" then pcall(function() obj:Destroy() end) end
+						cubes[p] = nil
+					end
+				end
+			elseif ESP.Mode == "Outline" or ESP.Mode == "Chams" then
+				if cache._cubes then
+					for _, obj in pairs(cache._cubes) do
+						if typeof(obj) == "Instance" then pcall(function() obj:Destroy() end) end
+					end
+					cache._cubes = nil
+				end
+				if not cache.Highlight then
+					local hl = Instance.new("Highlight")
+					hl.Name = rnd()
+					hl.Adornee = model
+					hiddenParent(hl)
+					cache.Highlight = hl
+				end
+				local hl = cache.Highlight
+				hl.Enabled = true
+				if hl.FillColor ~= ESP.Color then hl.FillColor = ESP.Color end
+				if hl.OutlineColor ~= ESP.Color then hl.OutlineColor = ESP.Color end
+				if ESP.Mode == "Chams" then
+					if hl.FillTransparency ~= ESP.ChamsTransparency then hl.FillTransparency = ESP.ChamsTransparency end
+					if hl.OutlineTransparency ~= 1 then hl.OutlineTransparency = 1 end
+				else
+					if hl.FillTransparency ~= 1 then hl.FillTransparency = 1 end
+					if hl.OutlineTransparency ~= 0 then hl.OutlineTransparency = 0 end
+				end
+			elseif ESP.Mode == "Boxes" and Drawing then
+				-- при переходе из Outline/Cubes/Chams — гасим старый Highlight
+				if cache.Highlight then cache.Highlight.Enabled = false end
+				if cache._cubes then
+					for _, obj in pairs(cache._cubes) do
+						if typeof(obj) == "Instance" then pcall(function() obj:Destroy() end) end
+					end
+					cache._cubes = nil
+				end
+				if not cache.Box then
+					cache.Box = Drawing.new("Square")
+					cache.Box.Thickness = 2
+					cache.Box.Filled = false
+				end
+				local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
+				if onScreen and pos.Z > 0.1 then
+					local w = math.clamp(1000 / pos.Z, 5, 2000)
+					local h = math.clamp(1500 / pos.Z, 5, 3000)
+					if cache.Box.Size ~= Vector2.new(w, h) then cache.Box.Size = Vector2.new(w, h) end
+					local newPos = Vector2.new(pos.X - w/2, pos.Y - h/2)
+					if cache.Box.Position ~= newPos then cache.Box.Position = newPos end
+					if cache.Box.Color ~= ESP.Color then cache.Box.Color = ESP.Color end
+					cache.Box.Visible = true
+				else
+					cache.Box.Visible = false
+				end
+			end
+		end
+	end
+
+	-- очистить кэш моделей, которых больше нет в списке
+	for model in pairs(_pfCache) do
+		if not seen[model] then _pfEspClear(model) end
+	end
+end
+
+--===========================================================================
 -- AIMBOT (перенос из aim.lua, управляется таблицей Aim)
 --===========================================================================
 local aimHolding = false
@@ -2449,11 +2870,8 @@ end
 G.aimRemoveFov = aimRemoveFov
 
 local function aimIsAlive(player)
-	local c = player.Character
-	if not c then return false end
-	local h = c:FindFirstChildOfClass("Humanoid")
-	if not h or h.Health <= 0 then return false end
-	return c:FindFirstChild("HumanoidRootPart") ~= nil
+	local c = resolveCharacter(player)
+	return c ~= nil and resolveAlive(c)
 end
 
 local function aimIsTeammate(player)
@@ -2464,11 +2882,11 @@ end
 
 local function aimIsVisible(targetPart)
 	if not Aim.WallCheck then return true end
-	local lc = LocalPlayer.Character
+	local lc = resolveCharacter(LocalPlayer)
 	if not lc then return true end
-	local head = lc:FindFirstChild("Head")
-	if not head then return true end
-	local origin = head.Position
+	local origin = resolveRoot(lc)
+	if not origin then return true end
+	origin = origin.Position
 	local dir = (targetPart.Position - origin)
 	local rp = RaycastParams.new()
 	rp.FilterType = Enum.RaycastFilterType.Exclude
@@ -2487,13 +2905,15 @@ local function aimGetClosest()
 	local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player ~= LocalPlayer and not aimIsTeammate(player) and aimIsAlive(player) then
-			local char = player.Character
-			local part = char:FindFirstChild(Aim.AimPart)
+			local char = resolveCharacter(player)
+			local part = char and resolveAimPart(char, Aim.AimPart)
 			if part then
-				local lc = LocalPlayer.Character
+				local lc = resolveCharacter(LocalPlayer)
+				local lcRoot = lc and resolveRoot(lc)
 				local ok = true
-				if lc and lc:FindFirstChild("HumanoidRootPart") then
-					if (part.Position - lc.HumanoidRootPart.Position).Magnitude > Aim.MaxDistance then
+				if lcRoot then
+					local diff = part.Position - lcRoot.Position
+					if diff:Dot(diff) > Aim.MaxDistance * Aim.MaxDistance then
 						ok = false
 					end
 				end
@@ -2514,13 +2934,13 @@ local function aimGetClosest()
 end
 
 local function aimAt(player)
-	local char = player.Character
+	local char = resolveCharacter(player)
 	if not char then return end
-	local part = char:FindFirstChild(Aim.AimPart)
+	local part = resolveAimPart(char, Aim.AimPart)
 	if not part then return end
 	local pos = part.Position
 	if Aim.PredictionEnabled then
-		local hrp = char:FindFirstChild("HumanoidRootPart")
+		local hrp = resolveRoot(char)
 		if hrp then pos = pos + (hrp.AssemblyLinearVelocity * Aim.PredictionStrength) end
 	end
 	local cur = Camera.CFrame
@@ -2564,8 +2984,8 @@ G.aimLoop = RunService.RenderStepped:Connect(function()
 	if not aimTarget then
 		aimTarget = aimGetClosest()
 	else
-		local char = aimTarget.Character
-		local part = char and char:FindFirstChild(Aim.AimPart)
+		local char = resolveCharacter(aimTarget)
+		local part = char and resolveAimPart(char, Aim.AimPart)
 		if not part then
 			aimTarget = aimGetClosest()
 		else
@@ -2581,9 +3001,22 @@ end)
 --===========================================================================
 local _cachedPlayers = {}
 local _playersLastUpdate = 0
-G.espLoop = RunService.RenderStepped:Connect(function()
+G.espLoop = RunService.RenderStepped:Connect(function(dt)
 	if G.shutdown then return end
 	if not ESP.Enabled then return end
+
+	-- троттлинг: обновляем визуал ESP не чаще, чем раз в ~1/30 сек (30 Гц достаточно)
+	G._espAccum = (G._espAccum or 0) + dt
+	local INTERVAL = 1 / 30
+	if G._espAccum < INTERVAL then return end
+	G._espAccum = 0
+
+	-- PF-провайдер: совсем другой путь обхода моделей (вместо Players:GetPlayers)
+	if ESP.PFMode then
+		_pfRunEsp()
+		return
+	end
+
 	local now = tick()
 	if now - _playersLastUpdate > 0.5 then
 		_cachedPlayers = Players:GetPlayers()
@@ -2595,16 +3028,20 @@ G.espLoop = RunService.RenderStepped:Connect(function()
 			clearESP(player); continue
 		end
 
-		local char = player.Character
-		local hum = char and char:FindFirstChild("Humanoid")
-		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		local char = resolveCharacter(player)
+		local hrp  = char and resolveRoot(char)
 
-		if not char or not hum or hum.Health <= 0 or not hrp then
+		if not char or not hrp or not resolveAlive(char) then
 			clearESP(player); continue
 		end
 
-		local dist = (hrp.Position - Camera.CFrame.Position).Magnitude
-		local inRange = (ESP.Radius >= 10000) or (dist <= ESP.Radius)
+		local inRange
+		if ESP.Radius >= 10000 then
+			inRange = true
+		else
+			local d = hrp.Position - Camera.CFrame.Position
+			inRange = (d:Dot(d) <= ESP.Radius * ESP.Radius)
+		end
 
 		if not espCache[player] then espCache[player] = {} end
 		local cache = espCache[player]
@@ -2628,8 +3065,9 @@ G.espLoop = RunService.RenderStepped:Connect(function()
 			local activeParts = {}
 			if not cache._cubes then cache._cubes = {} end
 			local cubes = cache._cubes
+			local _rootName = hrp.Name
 			for _, part in pairs(char:GetChildren()) do
-				if part:IsA("BasePart") and part.Transparency < 1 and part.Name ~= "HumanoidRootPart" then
+				if part:IsA("BasePart") and part.Transparency < 1 and part.Name ~= _rootName then
 					local id = "Cube_" .. part.Name
 					activeParts[id] = true
 					if not cubes[id] then
@@ -2702,7 +3140,10 @@ G.espLoop = RunService.RenderStepped:Connect(function()
 	end
 end)
 
-G.espRemoveConn = Players.PlayerRemoving:Connect(clearESP)
+G.espRemoveConn = Players.PlayerRemoving:Connect(function(plr)
+	clearESP(plr)
+	_charResolveCache[plr] = nil
+end)
 
 --===========================================================================
 -- PLAYER LOGIC LOOPS
@@ -2874,7 +3315,11 @@ KillBtn.MouseButton1Click:Connect(function()
 	end
 	-- Cleanup ESP
 	ESP.Enabled = false
+	ESP.PFMode = false
 	for _, p in pairs(Players:GetPlayers()) do clearESP(p) end
+	_pfEspClear()
+	-- Cleanup character resolver cache
+	_charResolveCache = {}
 	-- Stop state loops
 	G.gold = false; G.goldClaim = false; G.autoFort = false
 	G.slapple = false; G.spoofMask = false; G.antirag = false
