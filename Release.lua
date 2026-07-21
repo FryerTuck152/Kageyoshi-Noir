@@ -61,13 +61,20 @@ if G.espCache then
 	end
 end
 G.espCache = {}
+-- cleanup leftover Hitbox adornments from the previous run
+if G.hitboxCache then
+	for _, adorn in pairs(G.hitboxCache) do
+		if typeof(adorn) == "Instance" then pcall(function() adorn:Destroy() end) end
+	end
+end
+G.hitboxCache = {}
 local espCache = G.espCache
 local _SIZE_OFFSET = Vector3.new(0.05, 0.05, 0.05)
 
 G.gold = false; G.goldClaim = false; G.autoFort = false
 G.slapple = false; G.spoofMask = false; G.antirag = false
 
-local ESP = { Enabled = false, ShowTeam = true, Mode = "Cubes", ChamsTransparency = 0.5, Hue = 0.5, Shade = 0.5, Color = Color3.fromRGB(95, 205, 228), Radius = 10000, PFMode = false }
+local ESP = { Enabled = false, ShowTeam = true, Mode = "Cubes", ChamsTransparency = 0.5, Hue = 0.5, Shade = 0.5, Color = Color3.fromRGB(95, 205, 228), Radius = 10000, PFMode = false, ShowNames = false, ShowHealth = false, ShowDistance = false, ShowHealthBar = false, MM2Mode = false }
 local PlayerMods = { SpeedEnabled = false, SpeedValue = 16, JumpEnabled = false, JumpValue = 50, FlyEnabled = false, FlySpeed = 50, NoclipEnabled = false, WallWalkEnabled = false, InfJumpEnabled = false, AntiKnockback = false }
 
 local Aim = {
@@ -83,6 +90,8 @@ local Aim = {
 	WallCheck = true,
 	PredictionEnabled = false,
 	PredictionStrength = 0.12,
+	TargetMode = "Closest to Crosshair",
+	AimLock = false,
 }
 
 local Crosshair = {
@@ -360,16 +369,27 @@ SideBar.BorderSizePixel = 0
 SideBar.Parent = MainFrame
 Instance.new("UICorner", SideBar).CornerRadius = UDim.new(0, 10)
 
-local TabList = Instance.new("Frame")
+local TabList = Instance.new("ScrollingFrame")
 TabList.Size = UDim2.new(1, 0, 1, -50)
 TabList.Position = UDim2.new(0, 0, 0, 10)
 TabList.BackgroundTransparency = 1
+TabList.BorderSizePixel = 0
+TabList.ScrollBarThickness = 4
+TabList.ScrollBarImageColor3 = THEME.NEON
+TabList.ScrollBarImageTransparency = 0.5
+TabList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+TabList.CanvasSize = UDim2.new(0, 0, 0, 0)
+TabList.ScrollingEnabled = true
+TabList.CanvasPosition = Vector2.new(0, 0)
 TabList.Parent = SideBar
 do
 	local l = Instance.new("UIListLayout", TabList)
 	l.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	l.VerticalAlignment = Enum.VerticalAlignment.Top
 	l.Padding = UDim.new(0, 4)
 end
+local _tabListPad = Instance.new("UIPadding", TabList)
+_tabListPad.PaddingBottom = UDim.new(0, 8)
 
 local KillBtn = Instance.new("TextButton")
 KillBtn.Size = UDim2.new(1, -16, 0, 36)
@@ -434,7 +454,7 @@ local function refreshScroll(def)
 end
 
 -- ==== TAB LIST =================================================
-local TAB_NAMES = { "ESP", "Player", "Aim", "Babft", "Movement", "Slap Battles", "Performance", "Integration", "Crosshair", "Etc" }
+local TAB_NAMES = { "ESP", "Player", "Aim", "Babft", "Movement", "Slap Battles", "Performance", "Integration", "Crosshair", "Debug", "Etc" }
 
 for _, name in ipairs(TAB_NAMES) do
 	local btn = Instance.new("TextButton")
@@ -916,7 +936,7 @@ local function createXYZInputs(searchKey, parentRow)
 
 	local function mkBox(ph, order)
 		local b = Instance.new("TextBox")
-		b.Size = UDim2.new(0.31, 0, 1, 0)
+		b.Size = UDim2.new(1/3, -4, 1, 0)
 		b.BackgroundColor3 = THEME.UI_ELEM
 		b.TextColor3 = THEME.TEXT_MAIN
 		b.Font = Enum.Font.Gotham
@@ -1005,6 +1025,7 @@ do
 	createSubcategoryHeader("ESP")
 
 	local espRow
+	local shadeRec, hueRec   -- MM2: ссылки на строки слайдеров цвета/тени, чтобы прятать их
 	espRow = createCheckbox("Toggle ESP", false, "Toggle ESP", nil, function(on)
 		ESP.Enabled = on
 		setChildrenEnabled(espRow, on)
@@ -1054,7 +1075,8 @@ do
 	updateRow(chamsSliderRow)
 
 	local shadeGradient
-	local _, _g = createSlider("Shade", 0.5, "Shade ESP", false, true, function(v)
+	local _g
+	shadeRec, _g = createSlider("Shade", 0.5, "Shade ESP", false, true, function(v)
 		ESP.Shade = v; updateColor()
 		if shadeGradient then
 			shadeGradient.Color = ColorSequence.new({
@@ -1066,7 +1088,7 @@ do
 	end, nil, nil, espRow)
 	shadeGradient = _g
 
-	createSlider("Hue", 0.5, "Hue ESP", true, false, function(v)
+	hueRec = createSlider("Hue", 0.5, "Hue ESP", true, false, function(v)
 		ESP.Hue = v
 		updateColor()
 		if shadeGradient then
@@ -1077,6 +1099,25 @@ do
 			})
 		end
 	end, nil, nil, espRow)
+
+	-- MM2: слайдеры Shade/Hue прячутся, когда включены MM2-роли
+	shadeRec.visibleExtra = function() return not ESP.MM2Mode end
+	updateRow(shadeRec)
+	hueRec.visibleExtra = function() return not ESP.MM2Mode end
+	updateRow(hueRec)
+
+	-- MM2 роли: Sheriff=синий, Murderer=красный, Innocent=розовый (цвет меню)
+	createCheckbox("Show MM2 roles", false, "Show MM2 roles ESP", espRow, function(on)
+		ESP.MM2Mode = on
+		if shadeRec then updateRow(shadeRec) end
+		if hueRec then updateRow(hueRec) end
+		task.defer(function() refreshScroll(ACTIVE_TAB) end)
+	end)
+
+	createCheckbox("Show Names", false, "Show Names ESP", espRow, function(on) ESP.ShowNames = on end)
+	createCheckbox("Show Health", false, "Show Health ESP", espRow, function(on) ESP.ShowHealth = on end)
+	createCheckbox("Show Distance", false, "Show Distance ESP", espRow, function(on) ESP.ShowDistance = on end)
+	createCheckbox("Show Health Bar", false, "Show Health Bar ESP", espRow, function(on) ESP.ShowHealthBar = on end)
 end
 
 --==== TAB: Player =======================================================
@@ -1104,11 +1145,23 @@ do
 		PlayerMods.JumpValue = v
 	end, 50, 500, jpRow)
 
-	-- Fly + Fly Speed / Noclip / WallWalk (sub-options)
+	-- forward-decl для независимого Wall Walk (создаётся ниже)
+	local wallWalkRec, wallWalkSetState
+
+	-- Fly + Fly Speed / Noclip (sub-options)
 	local flyRow
 	flyRow = createCheckbox("Fly", false, "Fly", nil, function(on)
 		PlayerMods.FlyEnabled = on
 		setChildrenEnabled(flyRow, on)
+		-- Fly и Wall Walk конфликтуют: при включении Fly принудительно выключаем Wall Walk
+		if on and PlayerMods.WallWalkEnabled then
+			PlayerMods.WallWalkEnabled = false
+			if wallWalkSetState then wallWalkSetState(false, true) end
+			_restoreCollision()
+		end
+		-- пересчитать видимость строки Wall Walk (прячется, пока Fly включён)
+		if wallWalkRec then updateRow(wallWalkRec) end
+		task.defer(function() refreshScroll(ACTIVE_TAB) end)
 		local char = LocalPlayer.Character
 		if char and char:FindFirstChild("HumanoidRootPart") then
 			local hrp = char.HumanoidRootPart
@@ -1134,10 +1187,15 @@ do
 		PlayerMods.NoclipEnabled = on
 		if not on then _restoreCollision() end
 	end)
-	createCheckbox("Wall Walk", false, "Wall Walk", flyRow, function(on)
+
+	-- Wall Walk — независимая функция верхнего уровня.
+	-- Скрывается, пока включён Fly (конфликт коллизий с Fly/Noclip).
+	wallWalkRec, _, _, wallWalkSetState = createCheckbox("Wall Walk", false, "Wall Walk", nil, function(on)
 		PlayerMods.WallWalkEnabled = on
 		if not on then _restoreCollision() end
 	end)
+	wallWalkRec.visibleExtra = function() return not PlayerMods.FlyEnabled end
+	updateRow(wallWalkRec)
 
 	-- Infinite Jump
 	createCheckbox("Infinite Jump", false, "Infinite Jump", nil, function(on)
@@ -1252,6 +1310,14 @@ do
 	end, 0, 100, aimRow)
 	predStrengthRow.visibleExtra = function() return Aim.PredictionEnabled end
 	updateRow(predStrengthRow)
+
+	createDropdown("Target", {"Closest to Crosshair", "Closest Distance", "Lowest Health"}, "Closest to Crosshair", "Aim Target Mode", function(opt)
+		Aim.TargetMode = opt
+	end, aimRow)
+
+	createCheckbox("Aim Lock", false, "Aim Lock", aimRow, function(on)
+		Aim.AimLock = on
+	end)
 end
 
 --==== TAB: Babft ========================================================
@@ -1398,6 +1464,14 @@ do
 			end
 		end
 	end)
+	createButton("Tween Teleport to:", "Tween Teleport to", function()
+		local x = tonumber(tbX.Text)
+		local y = tonumber(tbY.Text)
+		local z = tonumber(tbZ.Text)
+		if x and y and z and G.tweenTeleportXYZ then
+			G.tweenTeleportXYZ(x, y, z)
+		end
+	end)
 
 	local privatePlate = nil
 	createButton("Go to Baseplate", "Go to Baseplate", function()
@@ -1417,6 +1491,109 @@ do
 		local char = LocalPlayer.Character
 		if char and char:FindFirstChild("HumanoidRootPart") then
 			char.HumanoidRootPart.CFrame = CFrame.new(PLATE_X, PLATE_Y + 15, PLATE_Z)
+		end
+	end)
+
+	createSubcategoryHeader("Saved Coordinates")
+
+	local moveTabDef = ACTIVE_TAB
+	local moveContainer = ACTIVE_TAB.container
+
+	local function addSavedCoord(x, y, z)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, -10, 0, 30)
+		row.BackgroundTransparency = 1
+		local l = Instance.new("UIListLayout", row)
+		l.FillDirection = Enum.FillDirection.Horizontal
+		l.Padding = UDim.new(0, 6)
+		l.SortOrder = Enum.SortOrder.LayoutOrder
+
+		local coordStr = string.format("%.1f, %.1f, %.1f", x, y, z)
+
+		local tpBtn = Instance.new("TextButton")
+		tpBtn.Size = UDim2.new(1, 0, 1, 0)
+		tpBtn.BackgroundColor3 = THEME.UI_ELEM
+		tpBtn.Text = "TP: " .. coordStr
+		tpBtn.TextColor3 = THEME.TEXT_MAIN
+		tpBtn.Font = Enum.Font.Gotham
+		tpBtn.TextSize = 12
+		tpBtn.LayoutOrder = 1
+		Instance.new("UICorner", tpBtn).CornerRadius = UDim.new(0, 6)
+		glowStroke(tpBtn, 0.5, 0.7)
+		tpBtn.Parent = row
+
+		local copyBtn = Instance.new("TextButton")
+		copyBtn.Size = UDim2.new(0, 40, 1, 0)
+		copyBtn.BackgroundColor3 = THEME.NEON
+		copyBtn.Text = "Copy"
+		copyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		copyBtn.Font = Enum.Font.Gotham
+		copyBtn.TextSize = 11
+		copyBtn.LayoutOrder = 2
+		Instance.new("UICorner", copyBtn).CornerRadius = UDim.new(0, 6)
+		copyBtn.Parent = row
+
+		local delBtn = Instance.new("TextButton")
+		delBtn.Size = UDim2.new(0, 40, 1, 0)
+		delBtn.BackgroundColor3 = THEME.NEON
+		delBtn.Text = "Del"
+		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		delBtn.Font = Enum.Font.Gotham
+		delBtn.TextSize = 11
+		delBtn.LayoutOrder = 3
+		Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 6)
+		delBtn.Parent = row
+
+		tpBtn.MouseButton1Click:Connect(function()
+			local char = LocalPlayer.Character
+			if char and char:FindFirstChild("HumanoidRootPart") then
+				char.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
+			end
+		end)
+		tpBtn.MouseButton2Click:Connect(function()
+			if G.tweenTeleportXYZ then G.tweenTeleportXYZ(x, y, z) end
+		end)
+		copyBtn.MouseButton1Click:Connect(function()
+			pcall(function() setclipboard(coordStr) end)
+			local prev = copyBtn.Text
+			copyBtn.Text = "OK"
+			task.delay(0.6, function() if copyBtn.Parent then copyBtn.Text = prev end end)
+		end)
+		delBtn.MouseButton1Click:Connect(function()
+			row:Destroy()
+			for i, r in ipairs(moveTabDef.rows) do
+				if r.frame == row then
+					table.remove(moveTabDef.rows, i)
+					break
+				end
+			end
+			task.defer(function() refreshScroll(moveTabDef) end)
+		end)
+
+		row.Parent = moveContainer
+		row.LayoutOrder = 1000 + #moveTabDef.rows
+		local rec = {
+			frame = row, searchKey = "saved coord " .. coordStr, parentRow = nil,
+			children = {}, enabledByParent = true, visibleBySearch = true, visibleExtra = nil,
+		}
+		table.insert(moveTabDef.rows, rec)
+		updateRow(rec)
+		task.defer(function() refreshScroll(moveTabDef) end)
+	end
+
+	createButton("Save Coordinates", "Save Coordinates", function()
+		local x = tonumber(tbX.Text)
+		local y = tonumber(tbY.Text)
+		local z = tonumber(tbZ.Text)
+		if x and y and z then addSavedCoord(x, y, z) end
+	end)
+
+	createButton("Save Current Coordinates", "Save Current Coordinates", function()
+		local char = LocalPlayer.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			local p = hrp.Position
+			addSavedCoord(p.X, p.Y, p.Z)
 		end
 	end)
 end
@@ -1942,46 +2119,10 @@ do
 		loadstring(game:HttpGet('https://raw.githubusercontent.com/DarkNetworks/Infinite-Yield/main/latest.lua'))()
 	end)
 
-	createButton("Kill Infinity Yield", "Kill Infinity Yield", function()
-		if _G.IY_LOADED then _G.IY_LOADED = false end
-		if getgenv().IY_LOADED then getgenv().IY_LOADED = false end
-		for _, v in pairs(CoreGui:GetChildren()) do
-			if v:IsA("ScreenGui") and v.Name ~= RN.Gui and not v.Name:match("Roblox") then
-				pcall(function() v:Destroy() end)
-			end
-		end
-	end)
-
 	createSubcategoryHeader("Simple Spy")
 
 	createButton("Simple Spy", "Launch Simple Spy", function()
 		loadstring(game:HttpGetAsync("https://raw.githubusercontent.com/78n/SimpleSpy/main/SimpleSpyBeta.lua"))()
-	end)
-
-	createButton("Terminate Simple Spy", "Terminate Simple Spy", function()
-		local iyNames = {"Infinite Yield", "InfiniteYield", "IY"}
-		local function isIY(name)
-			for _, n in pairs(iyNames) do
-				if name == n then return true end
-			end
-			return false
-		end
-		for _, v in pairs(CoreGui:GetChildren()) do
-			if v:IsA("ScreenGui")
-				and v.Name ~= RN.Gui
-				and not v.Name:match("Roblox")
-				and not isIY(v.Name)
-			then
-				pcall(function() v:Destroy() end)
-			end
-		end
-		pcall(function()
-			if getgenv().SS then getgenv().SS = nil end
-			if getgenv().SimpleSpy then getgenv().SimpleSpy = nil end
-			if _G.SimpleSpy then _G.SimpleSpy = nil end
-			if _G.SS then _G.SS = nil end
-			if getgenv().SimpleSpyActive then getgenv().SimpleSpyActive = false end
-		end)
 	end)
 
 	createSubcategoryHeader("Hydroxide")
@@ -1996,25 +2137,28 @@ do
 		webImport("ui/main")
 	end)
 
-	createButton("Terminate Hydroxide", "Terminate Hydroxide", function()
-		local protectedNames = {RN.Gui, "Infinite Yield", "InfiniteYield", "IY"}
-		local spyNames = {"SimpleSpy", "SimpleSpyGui", "SSpy", "Simple Spy"}
-		local function isProtected(name)
-			if name:match("Roblox") then return true end
-			for _, n in pairs(protectedNames) do
-				if name == n then return true end
-			end
-			for _, n in pairs(spyNames) do
-				if name == n then return true end
-			end
-			return false
-		end
+	createSubcategoryHeader("Terminate")
+
+	createButton("Terminate All", "Terminate All External", function()
+		local ownInstances = { ScreenGui, G.crosshairGui, G.statsGui, G.cursorGui }
 		for _, v in pairs(CoreGui:GetChildren()) do
-			if v:IsA("ScreenGui") and not isProtected(v.Name) then
-				pcall(function() v:Destroy() end)
+			if v:IsA("ScreenGui") then
+				local isOwn = false
+				for _, o in ipairs(ownInstances) do
+					if o and v == o then isOwn = true break end
+				end
+				if not isOwn and v.Name ~= RN.Gui and not v.Name:match("Roblox") then
+					pcall(function() v:Destroy() end)
+				end
 			end
 		end
 		pcall(function()
+			if getgenv().IY_LOADED then getgenv().IY_LOADED = false end
+			if _G.IY_LOADED then _G.IY_LOADED = false end
+			if getgenv().SimpleSpy then getgenv().SimpleSpy = nil end
+			if getgenv().SS then getgenv().SS = nil end
+			if _G.SimpleSpy then _G.SimpleSpy = nil end
+			if _G.SS then _G.SS = nil end
 			if getgenv().Hydroxide then getgenv().Hydroxide = nil end
 			if _G.Hydroxide then _G.Hydroxide = nil end
 		end)
@@ -2901,36 +3045,45 @@ local function aimIsVisible(targetPart)
 end
 
 local function aimGetClosest()
-	local closest, closestDist = nil, Aim.FOV_Radius
 	local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+	local best, bestScore = nil, nil
+	local lc = resolveCharacter(LocalPlayer)
+	local lcRoot = lc and resolveRoot(lc)
 	for _, player in ipairs(Players:GetPlayers()) do
 		if player ~= LocalPlayer and not aimIsTeammate(player) and aimIsAlive(player) then
 			local char = resolveCharacter(player)
 			local part = char and resolveAimPart(char, Aim.AimPart)
 			if part then
-				local lc = resolveCharacter(LocalPlayer)
-				local lcRoot = lc and resolveRoot(lc)
 				local ok = true
 				if lcRoot then
 					local diff = part.Position - lcRoot.Position
-					if diff:Dot(diff) > Aim.MaxDistance * Aim.MaxDistance then
-						ok = false
-					end
+					if diff:Dot(diff) > Aim.MaxDistance * Aim.MaxDistance then ok = false end
 				end
 				if ok then
 					local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
 					if onScreen then
-						local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
-						if d < closestDist and aimIsVisible(part) then
-							closestDist = d
-							closest = player
+						local screenDist = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+						if screenDist <= Aim.FOV_Radius and aimIsVisible(part) then
+							local score
+							if Aim.TargetMode == "Closest Distance" then
+								score = lcRoot and (part.Position - lcRoot.Position).Magnitude or screenDist
+							elseif Aim.TargetMode == "Lowest Health" then
+								local hum = char:FindFirstChildOfClass("Humanoid")
+								score = hum and hum.Health or math.huge
+							else -- "Closest to Crosshair" (по умолчанию)
+								score = screenDist
+							end
+							if not bestScore or score < bestScore then
+								bestScore = score
+								best = player
+							end
 						end
 					end
 				end
 			end
 		end
 	end
-	return closest
+	return best
 end
 
 local function aimAt(player)
@@ -2981,26 +3134,88 @@ G.aimLoop = RunService.RenderStepped:Connect(function()
 	end
 	if not aimKeyHeld() then aimTarget = nil; return end
 	if aimTarget and not aimIsAlive(aimTarget) then aimTarget = nil end
-	if not aimTarget then
-		aimTarget = aimGetClosest()
-	else
-		local char = resolveCharacter(aimTarget)
-		local part = char and resolveAimPart(char, Aim.AimPart)
-		if not part then
-			aimTarget = aimGetClosest()
-		else
-			local _, onScreen = Camera:WorldToViewportPoint(part.Position)
-			if not onScreen then aimTarget = aimGetClosest() end
+
+	if Aim.AimLock then
+		if aimTarget then
+			local char = resolveCharacter(aimTarget)
+			local part = char and resolveAimPart(char, Aim.AimPart)
+			local valid = false
+			if part then
+				local sp, onScreen = Camera:WorldToViewportPoint(part.Position)
+				if onScreen then
+					local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+					local d = (Vector2.new(sp.X, sp.Y) - center).Magnitude
+					if d <= Aim.FOV_Radius then valid = true end
+				end
+			end
+			if not valid then aimTarget = nil end
 		end
+		if not aimTarget then aimTarget = aimGetClosest() end
+	else
+		aimTarget = aimGetClosest()
 	end
+
 	if aimTarget then aimAt(aimTarget) end
 end)
+
+--===========================================================================
+-- MM2 ROLE COLORING (Sheriff/Murderer/Innocent)
+--===========================================================================
+local MM2_SHERIFF  = Color3.fromRGB(40, 120, 255)  -- синий
+local MM2_MURDERER = Color3.fromRGB(255, 25, 25)    -- красный
+-- Innocent = THEME.NEON (розовый цвет меню)
+
+local function getMM2Role(player)
+	local char = resolveCharacter(player)
+	if char then
+		if char:FindFirstChild("Knife") then return "Murderer" end
+		if char:FindFirstChild("Gun") then return "Sheriff" end
+	end
+	local bp = player:FindFirstChildOfClass("Backpack")
+	if bp then
+		if bp:FindFirstChild("Knife") then return "Murderer" end
+		if bp:FindFirstChild("Gun") then return "Sheriff" end
+	end
+	return "Innocent"
+end
+
+-- цвет ESP для конкретного игрока: по роли (если MM2Mode), иначе общий ESP.Color
+local function getEspColor(player)
+	if ESP.MM2Mode then
+		local role = getMM2Role(player)
+		if role == "Sheriff" then return MM2_SHERIFF
+		elseif role == "Murderer" then return MM2_MURDERER
+		else return THEME.NEON end
+	end
+	return ESP.Color
+end
 
 --===========================================================================
 -- ESP RENDER LOOP
 --===========================================================================
 local _cachedPlayers = {}
 local _playersLastUpdate = 0
+
+local function _espEnsureText(cache, key)
+	if not cache[key] then
+		local t = Drawing.new("Text")
+		t.Size = 17
+		t.Center = true       -- центрирование по горизонтали относительно Position
+		t.Outline = true
+		t.Font = 0            -- UI-шрифт: при мелком размере самый плотный/читаемый из доступных
+		cache[key] = t
+	end
+	return cache[key]
+end
+local function _espEnsureSquare(cache, key)
+	if not cache[key] then
+		local s = Drawing.new("Square")
+		s.Filled = true
+		cache[key] = s
+	end
+	return cache[key]
+end
+
 G.espLoop = RunService.RenderStepped:Connect(function(dt)
 	if G.shutdown then return end
 	if not ESP.Enabled then return end
@@ -3058,8 +3273,13 @@ G.espLoop = RunService.RenderStepped:Connect(function(dt)
 			if cache._cubes then
 				for _, v in pairs(cache._cubes) do v.Visible = false end
 			end
+			for _, k in ipairs({"NameText","HealthText","DistText","HPBarBG","HPBarFill"}) do
+				if cache[k] then cache[k].Visible = false end
+			end
 			continue
 		end
+
+		local espColor = getEspColor(player)
 
 		if ESP.Mode == "Cubes" then
 			local activeParts = {}
@@ -3082,8 +3302,8 @@ G.espLoop = RunService.RenderStepped:Connect(function(dt)
 						cubes[id] = box
 					end
 					cubes[id].Visible = true
-					if cubes[id].Color3 ~= ESP.Color then
-						cubes[id].Color3 = ESP.Color
+					if cubes[id].Color3 ~= espColor then
+						cubes[id].Color3 = espColor
 					end
 					local newSize = part.Size + _SIZE_OFFSET
 					if cubes[id].Size ~= newSize then
@@ -3108,8 +3328,8 @@ G.espLoop = RunService.RenderStepped:Connect(function(dt)
 			end
 			local hl = cache.Highlight
 			hl.Enabled = true
-			hl.FillColor = ESP.Color
-			hl.OutlineColor = ESP.Color
+			hl.FillColor = espColor
+			hl.OutlineColor = espColor
 			if ESP.Mode == "Chams" then
 				hl.FillTransparency = ESP.ChamsTransparency
 				hl.OutlineTransparency = 1
@@ -3131,18 +3351,135 @@ G.espLoop = RunService.RenderStepped:Connect(function(dt)
 				local size = Vector2.new(width, height)
 				cache.Box.Size = size
 				cache.Box.Position = Vector2.new(pos.X - size.X / 2, pos.Y - size.Y / 2)
-				cache.Box.Color = ESP.Color
+				cache.Box.Color = espColor
 				cache.Box.Visible = true
 			else
 				cache.Box.Visible = false
 			end
 		end
+		-- текстовой/бар-overlay рендерится отдельным лупом G.textOverlayLoop (без троттлинга)
 	end
 end)
 
 G.espRemoveConn = Players.PlayerRemoving:Connect(function(plr)
 	clearESP(plr)
 	_charResolveCache[plr] = nil
+end)
+
+--===========================================================================
+-- ESP TEXT/HBAR OVERLAY LOOP (отдельный луп без троттлинга 30 Гц,
+-- чтобы надписи/бар следовали за персонажем на полном FPS без рваности)
+--===========================================================================
+-- FIX: скрывает ВСЕ overlay-объекты (текст + HP-бар) у всех игроков, чтобы
+-- Drawing-объекты не "зависали" в воздухе при выключении всех подписей.
+local _ESP_OVERLAY_KEYS = {"NameText", "HealthText", "DistText", "HPBarBG", "HPBarFill"}
+local function hideAllEspOverlays()
+	for _, cache in pairs(espCache) do
+		if type(cache) == "table" then
+			for _, k in ipairs(_ESP_OVERLAY_KEYS) do
+				if cache[k] then cache[k].Visible = false end
+			end
+		end
+	end
+end
+G.textOverlayLoop = RunService.RenderStepped:Connect(function()
+	if G.shutdown then return end
+	if not ESP.Enabled or ESP.PFMode or not Drawing then return end
+	if not (ESP.ShowNames or ESP.ShowHealth or ESP.ShowDistance or ESP.ShowHealthBar) then
+		hideAllEspOverlays()
+		return
+	end
+
+	local now = tick()
+	if now - _playersLastUpdate > 0.5 then
+		_cachedPlayers = Players:GetPlayers()
+		_playersLastUpdate = now
+	end
+
+	local camPos = Camera.CFrame.Position
+	local lineH = 18
+
+	for _, player in ipairs(_cachedPlayers) do
+		if player ~= LocalPlayer then
+			if not (ESP.ShowTeam == false and player.Team and LocalPlayer.Team and player.Team == LocalPlayer.Team) then
+				local char = resolveCharacter(player)
+				local hrp  = char and resolveRoot(char)
+				if char and hrp and resolveAlive(char) then
+					local inRange
+					if ESP.Radius >= 10000 then
+						inRange = true
+					else
+						local d = hrp.Position - camPos
+						inRange = (d:Dot(d) <= ESP.Radius * ESP.Radius)
+					end
+					if inRange then
+						local cache = espCache[player]
+						-- кэш создаётся/чистится только основным espLoop; тут лишь обновляем позиции текста
+						if cache then
+							local hum = char:FindFirstChildOfClass("Humanoid")
+							local head = char:FindFirstChild("Head") or hrp
+							local headHalf = (head and head:IsA("BasePart") and head.Size.Y / 2) or 0.5
+							local anchorWorld = head.Position + Vector3.new(0, headHalf + 2.0, 0)
+							local sp, onScreen = Camera:WorldToViewportPoint(anchorWorld)
+
+							local entries = {}
+							if ESP.ShowNames then
+								entries[#entries+1] = {key = "NameText", text = player.DisplayName}
+							end
+							if ESP.ShowHealth and hum then
+								entries[#entries+1] = {key = "HealthText", text = math.floor(hum.Health) .. " HP"}
+							end
+							if ESP.ShowDistance then
+								local d = (hrp.Position - camPos).Magnitude
+								entries[#entries+1] = {key = "DistText", text = math.floor(d) .. "m"}
+							end
+
+							for _, k in ipairs({"NameText","HealthText","DistText"}) do
+								local used = false
+								for _, e in ipairs(entries) do if e.key == k then used = true break end end
+								if not used and cache[k] then cache[k].Visible = false end
+							end
+
+							local wantBar = ESP.ShowHealthBar and hum and hum.MaxHealth > 0
+
+							if onScreen and sp.Z > 0 then
+								for i, e in ipairs(entries) do
+									local t = _espEnsureText(cache, e.key)
+									t.Text = e.text
+									t.Color = ESP.Color
+									t.Position = Vector2.new(sp.X, sp.Y - (#entries - i + 1) * lineH - 6)
+									t.Visible = true
+								end
+								if wantBar then
+									local frac = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+									local barW, barH = 50, 3
+									local bx = sp.X - barW / 2
+									local by = sp.Y
+									local bg = _espEnsureSquare(cache, "HPBarBG")
+									bg.Size = Vector2.new(barW, barH)
+									bg.Position = Vector2.new(bx, by)
+									bg.Color = Color3.fromRGB(0, 0, 0)
+									bg.Visible = true
+									local fill = _espEnsureSquare(cache, "HPBarFill")
+									fill.Size = Vector2.new(barW * frac, barH)
+									fill.Position = Vector2.new(bx, by)
+									fill.Color = Color3.fromRGB(255, 0, 0):Lerp(Color3.fromRGB(0, 255, 0), frac)
+									fill.Visible = true
+								else
+									if cache.HPBarBG then cache.HPBarBG.Visible = false end
+									if cache.HPBarFill then cache.HPBarFill.Visible = false end
+								end
+							else
+								for _, k in ipairs({"NameText","HealthText","DistText","HPBarBG","HPBarFill"}) do
+									if cache[k] then cache[k].Visible = false end
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
 end)
 
 --===========================================================================
@@ -3339,10 +3676,486 @@ KillBtn.MouseButton1Click:Connect(function()
 	-- Crosshair cleanup
 	Crosshair.Enabled = false
 	if G.crosshairGui then pcall(function() G.crosshairGui:Destroy() end); G.crosshairGui = nil end
+	-- Cleanup new features
+	if G.hitboxCache then
+		for plr, adorn in pairs(G.hitboxCache) do
+			pcall(function() adorn:Destroy() end)
+		end
+		G.hitboxCache = {}
+	end
+	G.nameSpoof = false
+	G.antifling = false
+	PlayerMods.FOVEnabled = false
+	if G.fovDefault then
+		pcall(function()
+			if workspace.CurrentCamera then workspace.CurrentCamera.FieldOfView = G.fovDefault end
+		end)
+	end
+	if G._tweenActive then pcall(function() G._tweenActive:Cancel() end); G._tweenActive = nil end
 	-- Destroy GUI
 	pcall(function() ScreenGui:Destroy() end)
 	getgenv()[KEY] = nil
 end)
+
+--===========================================================================
+-- ===================== TWEEN TELEPORT HELPER + SPEED (Movement) =====================
+do
+	setActive("Movement")
+	G.tweenSpeed = G.tweenSpeed or 80
+	G.tweenTeleportXYZ = function(x, y, z)
+		local char = LocalPlayer.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+		if G._tweenActive then pcall(function() G._tweenActive:Cancel() end); G._tweenActive = nil end
+		local target = CFrame.new(x, y, z)
+		local dist = (hrp.Position - target.Position).Magnitude
+		local dur = math.clamp(dist / math.max(G.tweenSpeed, 1), 0.05, 60)
+		G._tweenActive = TweenService:Create(hrp, TweenInfo.new(dur, Enum.EasingStyle.Linear), { CFrame = target })
+		G._tweenActive:Play()
+	end
+	createSlider("Tween Speed", 80, "Tween Speed", false, false, function(v)
+		G.tweenSpeed = v
+	end, 10, 500, nil)
+end
+
+--===========================================================================
+-- ===================== MOVEMENT: CLICK TP =====================
+do
+	setActive("Movement")
+	local ctpHeaderRec = createSubcategoryHeader("Click TP")
+
+	-- состояние тумблера (единственная переменная, которую трогает колбэк)
+	local clickTPEnabled = false
+
+	local ctpRec = createCheckbox("Click TP", false, "Click TP Movement", nil, function(on)
+		clickTPEnabled = on
+	end)
+
+	-- Поднимаем Click TP в самый верх вкладки Movement.
+	-- LayoutOrder < 0 сортируется раньше всех остальных строк (у них >= 1).
+	ctpHeaderRec.frame.LayoutOrder = -2
+	ctpRec.frame.LayoutOrder = -1
+
+	-- ОДНО соединение на всё время жизни скрипта. Лежит в G -> очистится при KILL/рестарте.
+	G.clickTP = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if G.shutdown then return end
+		if not clickTPEnabled then return end
+		if gameProcessed then return end                       -- клик по меню/UI игнорируем
+		if input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
+
+		local char = LocalPlayer.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+
+		-- луч от камеры через текущую позицию курсора
+		local cam = workspace.CurrentCamera
+		if not cam then return end
+		local mouseLoc = UserInputService:GetMouseLocation()
+		local ray = cam:ViewportPointToRay(mouseLoc.X, mouseLoc.Y)
+
+		local rp = RaycastParams.new()
+		rp.FilterType = Enum.RaycastFilterType.Exclude
+		rp.FilterDescendantsInstances = { char }               -- не попадать в самого себя
+		local result = workspace:Raycast(ray.Origin, ray.Direction * 5000, rp)
+
+		if result then
+			-- тот же механизм, что и в "Teleport to:" — прямая установка CFrame.
+			-- +3 по Y, чтобы не провалиться в поверхность.
+			hrp.CFrame = CFrame.new(result.Position + Vector3.new(0, 3, 0))
+		end
+	end)
+end
+
+-- ===================== PLAYER: CUSTOM FOV =====================
+do
+	setActive("Player")
+	createSubcategoryHeader("Camera")
+	G.fovDefault = G.fovDefault or (workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView) or 70
+	PlayerMods.FOVValue = PlayerMods.FOVValue or 70
+	PlayerMods.FOVEnabled = false
+
+	local fovRow
+	fovRow = createCheckbox("Custom FOV", false, "Custom FOV", nil, function(on)
+		PlayerMods.FOVEnabled = on
+		setChildrenEnabled(fovRow, on)
+		local cam = workspace.CurrentCamera
+		if cam then
+			if on then cam.FieldOfView = PlayerMods.FOVValue
+			else cam.FieldOfView = G.fovDefault end
+		end
+	end)
+
+	createSlider("FOV Value", 70, "FOV Value", false, false, function(v)
+		PlayerMods.FOVValue = v
+		if PlayerMods.FOVEnabled then
+			local cam = workspace.CurrentCamera
+			if cam then cam.FieldOfView = v end
+		end
+	end, 1, 180, fovRow)
+
+	G.fovLoop = RunService.RenderStepped:Connect(function()
+		if G.shutdown then return end
+		if not PlayerMods.FOVEnabled then return end
+		local cam = workspace.CurrentCamera
+		if cam and cam.FieldOfView ~= PlayerMods.FOVValue then
+			cam.FieldOfView = PlayerMods.FOVValue
+		end
+	end)
+end
+
+-- ===================== ETC: NAME SPOOF =====================
+do
+	setActive("Etc")
+	createSubcategoryHeader("Name Spoof")
+
+	local orig = {}
+	local function restoreAll()
+		for obj, t in pairs(orig) do pcall(function() obj.Text = t end) end
+		orig = {}
+	end
+	local function setText(obj, newText)
+		if orig[obj] == nil then orig[obj] = obj.Text end
+		pcall(function() obj.Text = newText end)
+	end
+	local function isStatValue(txt)
+		if not txt or txt == "" or txt == "-" then return false end
+		local cleaned = txt:gsub("[,%s]", "")
+		local numericPart = cleaned:gsub("[kKmMbByY%+%%]+$", "")
+		return tonumber(numericPart) ~= nil
+	end
+	local function findPlayerList()
+		local pl = CoreGui:FindFirstChild("PlayerList")
+		if pl then return pl end
+		local rg = CoreGui:FindFirstChild("RobloxGui")
+		if rg then return rg:FindFirstChild("PlayerList") end
+		return nil
+	end
+	local function maskRowStats(anchorLabel)
+		local candidates = { anchorLabel.Parent }
+		if anchorLabel.Parent then candidates[2] = anchorLabel.Parent.Parent end
+		for _, container in ipairs(candidates) do
+			if container then
+				local texts = {}
+				for _, sib in ipairs(container:GetDescendants()) do
+					if sib:IsA("TextLabel") or sib:IsA("TextButton") then
+						texts[#texts+1] = sib
+					end
+				end
+				if #texts <= 12 then
+					for _, sib in ipairs(texts) do
+						if sib ~= anchorLabel and isStatValue(sib.Text) then
+							setText(sib, "-")
+						end
+					end
+				end
+			end
+		end
+	end
+
+	createCheckbox("Name Spoof (my name + stats)", false, "Name Spoof", nil, function(on)
+		G.nameSpoof = on
+		if on then
+			task.spawn(function()
+				while G.nameSpoof do
+					if G.shutdown then G.nameSpoof = false; break end
+					local myName = LocalPlayer.Name
+					local myDisplay = LocalPlayer.DisplayName
+
+					local char = LocalPlayer.Character
+					if char then
+						local head = char:FindFirstChild("Head")
+						if head then
+							for _, d in ipairs(head:GetDescendants()) do
+								if d:IsA("TextLabel") or d:IsA("TextButton") then
+									local t = d.Text
+									if t == myName or t == myDisplay then setText(d, "---") end
+								end
+							end
+						end
+					end
+
+					local pl = findPlayerList()
+					if pl then
+						for _, d in ipairs(pl:GetDescendants()) do
+							if (d:IsA("TextLabel") or d:IsA("TextButton")) then
+								local t = d.Text
+								if t == myName or t == myDisplay then
+									setText(d, "---")
+									maskRowStats(d)
+								end
+							end
+						end
+					end
+
+					local valid = {}
+					for obj, t in pairs(orig) do
+						if obj and obj.Parent then valid[obj] = t end
+					end
+					orig = valid
+
+					task.wait(0.5)
+				end
+				restoreAll()
+			end)
+		else
+			G.nameSpoof = false
+			restoreAll()
+		end
+	end)
+end
+
+-- ===================== ETC: FLING DEFENSE =====================
+do
+	setActive("Etc")
+	createSubcategoryHeader("Protection")
+
+	createCheckbox("Fling Defense", false, "Fling Defense", nil, function(on)
+		G.antifling = on
+		if on then
+			if not G.antiflingLoop then
+				G.antiflingLoop = RunService.Stepped:Connect(function()
+					if G.shutdown or not G.antifling then return end
+					local char = LocalPlayer.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					if not hrp then return end
+					local av = hrp.AssemblyAngularVelocity
+					if av.Magnitude > 30 then
+						hrp.AssemblyAngularVelocity = Vector3.zero
+					end
+					local lv = hrp.AssemblyLinearVelocity
+					local horiz = Vector3.new(lv.X, 0, lv.Z)
+					if horiz.Magnitude > 500 then
+						hrp.AssemblyLinearVelocity = Vector3.new(0, lv.Y, 0)
+					end
+				end)
+			end
+		else
+			if G.antiflingLoop then pcall(function() G.antiflingLoop:Disconnect() end); G.antiflingLoop = nil end
+		end
+	end)
+end
+
+-- ===================== ETC: COPY SERVER JOIN =====================
+do
+	setActive("Etc")
+	createSubcategoryHeader("Server Join")
+
+	local _, joinScriptBtn = createButton("Copy Join Script", "Copy Join Script", function() end)
+	joinScriptBtn.MouseButton1Click:Connect(function()
+		local s = string.format(
+			'game:GetService("TeleportService"):TeleportToPlaceInstance(%d, "%s", game:GetService("Players").LocalPlayer)',
+			game.PlaceId, game.JobId
+		)
+		pcall(function() setclipboard(s) end)
+		local prev = joinScriptBtn.Text
+		joinScriptBtn.Text = "Copied!"
+		task.delay(0.8, function() if joinScriptBtn.Parent then joinScriptBtn.Text = prev end end)
+	end)
+
+	local _, joinLinkBtn = createButton("Copy Browser Join Link", "Copy Browser Join Link", function() end)
+	joinLinkBtn.MouseButton1Click:Connect(function()
+		local link = string.format(
+			"https://www.roblox.com/games/start?placeId=%d&gameInstanceId=%s",
+			game.PlaceId, game.JobId
+		)
+		pcall(function() setclipboard(link) end)
+		local prev = joinLinkBtn.Text
+		joinLinkBtn.Text = "Copied!"
+		task.delay(0.8, function() if joinLinkBtn.Parent then joinLinkBtn.Text = prev end end)
+	end)
+end
+
+-- ===================== DEBUG TAB =====================
+do
+	setActive("Debug")
+	local Stats = getService("Stats")
+	local debugTabDef = getTabDef("Debug")
+
+	task.spawn(function()
+		local reg = "Unknown"
+		pcall(function()
+			local LS = getService("LocalizationService")
+			reg = LS:GetCountryRegionForPlayerAsync(LocalPlayer)
+		end)
+		G.serverRegion = reg
+	end)
+
+	-- ---------- HITBOX SHOWER (with Hue/Shade/Transparency like ESP) ----------
+	createSubcategoryHeader("Hitbox Shower")
+
+	local Hitbox = { Enabled = false, Hue = 0.5, Shade = 0.5, Transparency = 0.5, Color = Color3.fromRGB(95, 205, 228) }
+	local function updateHitboxColor()
+		local h = Hitbox.Hue
+		local s, v = 1, 1
+		if Hitbox.Shade < 0.5 then v = Hitbox.Shade * 2; s = 1
+		else v = 1; s = 1 - ((Hitbox.Shade - 0.5) * 2) end
+		Hitbox.Color = Color3.fromHSV(h, s, v)
+	end
+
+	G.hitboxCache = G.hitboxCache or {}
+
+	local hbRow
+	hbRow = createCheckbox("Show Hitboxes", false, "Show Hitboxes", nil, function(on)
+		Hitbox.Enabled = on
+		setChildrenEnabled(hbRow, on)
+		if not on then
+			for plr, adorn in pairs(G.hitboxCache) do
+				pcall(function() adorn:Destroy() end)
+				G.hitboxCache[plr] = nil
+			end
+		end
+	end)
+
+	local hbShadeGradient
+	local _, _hg = createSlider("Shade", 0.5, "Shade Hitbox", false, true, function(v)
+		Hitbox.Shade = v; updateHitboxColor()
+		if hbShadeGradient then
+			hbShadeGradient.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
+				ColorSequenceKeypoint.new(0.5, Color3.fromHSV(Hitbox.Hue, 1, 1)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+			})
+		end
+	end, nil, nil, hbRow)
+	hbShadeGradient = _hg
+
+	createSlider("Hue", 0.5, "Hue Hitbox", true, false, function(v)
+		Hitbox.Hue = v; updateHitboxColor()
+		if hbShadeGradient then
+			hbShadeGradient.Color = ColorSequence.new({
+				ColorSequenceKeypoint.new(0, Color3.fromRGB(0, 0, 0)),
+				ColorSequenceKeypoint.new(0.5, Color3.fromHSV(Hitbox.Hue, 1, 1)),
+				ColorSequenceKeypoint.new(1, Color3.fromRGB(255, 255, 255)),
+			})
+		end
+	end, nil, nil, hbRow)
+
+	createSlider("Transparency", 0.5, "Transparency Hitbox", false, false, function(v)
+		Hitbox.Transparency = v
+	end, nil, nil, hbRow)
+
+	G.hitboxLoop = RunService.RenderStepped:Connect(function(dt)
+		if G.shutdown then return end
+		if not Hitbox.Enabled then return end
+		G._hbAccum = (G._hbAccum or 0) + dt
+		if G._hbAccum < (1/30) then return end
+		G._hbAccum = 0
+		local seen = {}
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= LocalPlayer then
+				local char = plr.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					seen[plr] = true
+					local adorn = G.hitboxCache[plr]
+					if not adorn then
+						adorn = Instance.new("BoxHandleAdornment")
+						adorn.Name = rnd()
+						adorn.AlwaysOnTop = true
+						adorn.ZIndex = 4
+						hiddenParent(adorn)
+						G.hitboxCache[plr] = adorn
+					end
+					adorn.Adornee = hrp
+					if adorn.Size ~= hrp.Size then adorn.Size = hrp.Size end
+					if adorn.Color3 ~= Hitbox.Color then adorn.Color3 = Hitbox.Color end
+					adorn.Transparency = Hitbox.Transparency
+					adorn.Visible = true
+				end
+			end
+		end
+		for plr, adorn in pairs(G.hitboxCache) do
+			if not seen[plr] then
+				pcall(function() adorn:Destroy() end)
+				G.hitboxCache[plr] = nil
+			end
+		end
+	end)
+
+	-- ---------- HELPER: info row ----------
+	local function makeInfoRow(defaultText, searchKey)
+		local frame = Instance.new("Frame")
+		frame.Size = UDim2.new(1, -10, 0, 24)
+		frame.BackgroundTransparency = 1
+		registerRow(frame, searchKey or defaultText, nil)
+		local lbl = Instance.new("TextLabel")
+		lbl.Size = UDim2.new(1, 0, 1, 0)
+		lbl.BackgroundTransparency = 1
+		lbl.Text = defaultText
+		lbl.TextColor3 = THEME.TEXT_MAIN
+		lbl.Font = Enum.Font.Gotham
+		lbl.TextSize = 13
+		lbl.TextXAlignment = Enum.TextXAlignment.Left
+		lbl.Parent = frame
+		return lbl
+	end
+
+	-- ---------- SYSTEM (Memory / CPU / GPU) ----------
+	createSubcategoryHeader("System")
+	local memLbl = makeInfoRow("Memory: ... MB", "Memory usage")
+	local cpuLbl = makeInfoRow("CPU (frame): ... ms", "CPU usage")
+	local gpuLbl = makeInfoRow("GPU (render): ... ms", "GPU usage")
+
+	-- ---------- NETWORK ----------
+	createSubcategoryHeader("Network")
+	local netLbl = makeInfoRow("Net In: ...  |  Out: ...", "Network stats in out")
+
+	-- ---------- SERVER ----------
+	createSubcategoryHeader("Server")
+	local uptimeLbl = makeInfoRow("Server uptime: --:--:--", "Server live time uptime")
+	local pingLbl = makeInfoRow("Ping: ... ms  |  Region: ...", "Server ping region")
+
+	G.debugFrameConn = RunService.RenderStepped:Connect(function(dt)
+		if G.shutdown then return end
+		if not (debugTabDef and debugTabDef.container.Visible and menuIsOpen) then return end
+		G._dbgFrames = (G._dbgFrames or 0) + 1
+		G._dbgDt = (G._dbgDt or 0) + dt
+	end)
+
+	G.debugThread = task.spawn(function()
+		local wasVisible = false
+		while true do
+			if G.shutdown then return end
+			task.wait(0.1)
+			if G.shutdown then return end
+
+			local visible = debugTabDef and debugTabDef.container.Visible and menuIsOpen
+			if not visible then
+				wasVisible = false
+			else
+				wasVisible = true
+
+				local memMb = 0
+				pcall(function() memMb = Stats:GetTotalMemoryUsageMb() end)
+				memLbl.Text = string.format("Memory: %d MB", math.floor(memMb))
+
+				local frames = G._dbgFrames or 0
+				local elapsed = G._dbgDt or 0
+				G._dbgFrames = 0; G._dbgDt = 0
+				local fps = (elapsed > 0) and math.floor(frames / elapsed) or 0
+				local frameMs = (fps > 0) and (1000 / fps) or 0
+				cpuLbl.Text = string.format("CPU (frame): %.1f ms  |  FPS: %d", frameMs, fps)
+				gpuLbl.Text = string.format("GPU (render): %.1f ms", frameMs)
+
+				local inK, outK = 0, 0
+				pcall(function() inK = Stats.DataReceiveKbps end)
+				pcall(function() outK = Stats.DataSendKbps end)
+				netLbl.Text = string.format("Net In: %.1f kb/s  |  Out: %.1f kb/s", inK, outK)
+
+				local up = 0
+				pcall(function() up = workspace.DistributedGameTime end)
+				local hh = math.floor(up / 3600)
+				local mm = math.floor((up % 3600) / 60)
+				local ss = math.floor(up % 60)
+				uptimeLbl.Text = string.format("Server uptime: %02d:%02d:%02d", hh, mm, ss)
+
+				local ping = 0
+				pcall(function() ping = math.floor(LocalPlayer:GetNetworkPing() * 1000) end)
+				pingLbl.Text = "Ping: " .. ping .. " ms  |  Region: " .. (G.serverRegion or "...")
+			end
+		end
+	end)
+end
 
 --===========================================================================
 -- FINAL SCROLL INITIALIZATION
