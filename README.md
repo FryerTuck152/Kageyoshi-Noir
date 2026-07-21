@@ -28,7 +28,7 @@ Script has many universal and targeted features:
 - Infinity Yield integration
 - Simple Spy intergration
 
-And many others.
+Other functions may be found in wiki, which is rarely updated so not all functions may be there.
 
 **Compability**
 
