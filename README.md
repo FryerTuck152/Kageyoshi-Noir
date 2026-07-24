@@ -37,3 +37,13 @@ Script was tested with Potassium and it should work with other modern executors 
 **License**
 
 Project is protected with GNU GPLv3 license. Code may be modified or copied, but it must keep open sourse. Scamming or earning money with script is not welcomed.
+
+**Credits**
+
+Script has some integrations, thanks to all developers doing these scripts:
+
+ - perfectusmim1 and his darkdexp [https://github.com/perfectusmim1/darkdex]
+ - 78n and his SimpleSpy [https://github.com/78n/SimpleSpy]
+ - Darknetworks and his Infinity-Yield [https://github.com/DarkNetworks/Infinite-Yield]
+ - Upbolt and his Hydroxide [https://github.com/Upbolt/Hydroxide]
+ - Notpoiu and his Cobalt [https://github.com/notpoiu/cobalt]
